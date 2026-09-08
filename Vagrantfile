@@ -46,6 +46,14 @@ Vagrant.configure("2") do |config|
           "BARMAN_STREAMING_PASSWORD" => ENV.fetch("BARMAN_STREAMING_PASSWORD", "")
         }
       end
+
+      if name == "pg-replica"
+        machine.vm.provision "shell",
+          path: "provision/replica.sh",
+          env: {
+            "PG_REPLICATION_PASSWORD" => ENV.fetch("PG_REPLICATION_PASSWORD", "")
+          }
+      end
     end
   end
 end
