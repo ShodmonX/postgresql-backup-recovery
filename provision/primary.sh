@@ -43,6 +43,56 @@ sed -i \
   "s/^#\?wal_keep_size\s*=.*/wal_keep_size = 512MB/" \
   "${PG_CONF_DIR}/postgresql.conf"
 
+if [[ -z "${PG_REPLICATION_PASSWORD:-}" ]]; then
+  echo "ERROR: PG_REPLICATION_PASSWORD is not set"
+  exit 1
+fi
+
+if [[ -z "${BARMAN_STREAMING_PASSWORD:-}" ]]; then
+  echo "ERROR: BARMAN_STREAMING_PASSWORD is not set"
+  exit 1
+fi
+
+sudo -u postgres psql \
+  --set=replication_password="${PG_REPLICATION_PASSWORD}" \
+  --set=barman_password="${BARMAN_STREAMING_PASSWORD}" <<'SQL'
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_roles WHERE rolname = 'replicator'
+  ) THEN
+    CREATE ROLE replicator WITH LOGIN REPLICATION;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_roles WHERE rolname = 'barman_streaming'
+  ) THEN
+    CREATE ROLE barman_streaming WITH LOGIN REPLICATION;
+  END IF;
+END
+$$;
+
+ALTER ROLE replicator
+  PASSWORD :'replication_password';
+
+ALTER ROLE barman_streaming
+  PASSWORD :'barman_password';
+SQL
+
+PG_HBA="${PG_CONF_DIR}/pg_hba.conf"
+
+sed -i \
+  '/# BEGIN POSTGRESQL-BACKUP-RECOVERY/,/# END POSTGRESQL-BACKUP-RECOVERY/d' \
+  "${PG_HBA}"
+
+cat >> "${PG_HBA}" <<'EOF'
+
+# BEGIN POSTGRESQL-BACKUP-RECOVERY
+host replication replicator        192.168.167.202/32 scram-sha-256
+host replication barman_streaming  192.168.167.210/32 scram-sha-256
+# END POSTGRESQL-BACKUP-RECOVERY
+EOF
+
 systemctl restart postgresql
 
 echo "==> Verifying PostgreSQL"

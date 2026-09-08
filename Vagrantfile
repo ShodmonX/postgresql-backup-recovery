@@ -39,7 +39,12 @@ Vagrant.configure("2") do |config|
       machine.vm.provision "shell", path: "provision/common.sh"
 
       if name == "pg-primary"
-        machine.vm.provision "shell", path: "provision/primary.sh"
+        machine.vm.provision "shell",
+        path: "provision/primary.sh",
+        env: {
+          "PG_REPLICATION_PASSWORD" => ENV.fetch("PG_REPLICATION_PASSWORD", ""),
+          "BARMAN_STREAMING_PASSWORD" => ENV.fetch("BARMAN_STREAMING_PASSWORD", "")
+        }
       end
     end
   end
