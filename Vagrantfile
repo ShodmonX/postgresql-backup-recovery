@@ -35,6 +35,8 @@ Vagrant.configure("2") do |config|
         vmware.memory = node[:memory]
         vmware.cpus = node[:cpus]
       end
+
+      machine.vm.provision "shell", path: "provision/common.sh"
     end
   end
 end
