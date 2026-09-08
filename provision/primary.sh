@@ -6,6 +6,21 @@ echo "==> Provisioning PostgreSQL primary on $(hostname)"
 
 export DEBIAN_FRONTEND=noninteractive
 
+if [[ -z "${PG_REPLICATION_PASSWORD:-}" ]]; then
+  echo "ERROR: PG_REPLICATION_PASSWORD is not set"
+  exit 1
+fi
+
+if [[ -z "${BARMAN_STREAMING_PASSWORD:-}" ]]; then
+  echo "ERROR: BARMAN_STREAMING_PASSWORD is not set"
+  exit 1
+fi
+
+if [[ -z "${BARMAN_PASSWORD:-}" ]]; then
+  echo "ERROR: BARMAN_PASSWORD is not set"
+  exit 1
+fi
+
 apt-get update -y
 
 # Ubuntu 24.04 default repository provides PostgreSQL 16.
@@ -43,25 +58,22 @@ sed -i \
   "s/^#\?wal_keep_size\s*=.*/wal_keep_size = 512MB/" \
   "${PG_CONF_DIR}/postgresql.conf"
 
-if [[ -z "${PG_REPLICATION_PASSWORD:-}" ]]; then
-  echo "ERROR: PG_REPLICATION_PASSWORD is not set"
-  exit 1
-fi
-
-if [[ -z "${BARMAN_STREAMING_PASSWORD:-}" ]]; then
-  echo "ERROR: BARMAN_STREAMING_PASSWORD is not set"
-  exit 1
-fi
-
 sudo -u postgres psql \
   --set=replication_password="${PG_REPLICATION_PASSWORD}" \
-  --set=barman_password="${BARMAN_STREAMING_PASSWORD}" <<'SQL'
+  --set=barman_password="${BARMAN_PASSWORD}" \
+  --set=barman_streaming_password="${BARMAN_STREAMING_PASSWORD}" <<'SQL'
 DO $$
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_roles WHERE rolname = 'replicator'
   ) THEN
     CREATE ROLE replicator WITH LOGIN REPLICATION;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_roles WHERE rolname = 'barman'
+  ) THEN
+    CREATE ROLE barman WITH LOGIN;
   END IF;
 
   IF NOT EXISTS (
@@ -75,8 +87,26 @@ $$;
 ALTER ROLE replicator
   PASSWORD :'replication_password';
 
-ALTER ROLE barman_streaming
+ALTER ROLE barman
   PASSWORD :'barman_password';
+
+ALTER ROLE barman_streaming
+  PASSWORD :'barman_streaming_password';
+
+GRANT pg_monitor TO barman;
+GRANT pg_checkpoint TO barman;
+
+GRANT EXECUTE ON FUNCTION pg_backup_start(text, boolean)
+TO barman;
+
+GRANT EXECUTE ON FUNCTION pg_backup_stop(boolean)
+TO barman;
+
+GRANT EXECUTE ON FUNCTION pg_switch_wal()
+TO barman;
+
+GRANT EXECUTE ON FUNCTION pg_create_restore_point(text)
+TO barman;
 SQL
 
 PG_HBA="${PG_CONF_DIR}/pg_hba.conf"
@@ -89,6 +119,7 @@ cat >> "${PG_HBA}" <<'EOF'
 
 # BEGIN POSTGRESQL-BACKUP-RECOVERY
 host replication replicator        192.168.167.202/32 scram-sha-256
+host all         barman            192.168.167.210/32 scram-sha-256
 host replication barman_streaming  192.168.167.210/32 scram-sha-256
 # END POSTGRESQL-BACKUP-RECOVERY
 EOF
