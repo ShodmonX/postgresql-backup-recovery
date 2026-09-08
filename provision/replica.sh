@@ -42,7 +42,8 @@ sudo -u postgres \
     -Fp \
     -Xs \
     -P \
-    -R
+    -R \
+    -S pg_replica_slot
 
 unset PGPASSWORD
 
@@ -58,5 +59,14 @@ systemctl start postgresql
 echo "==> Verifying standby state"
 
 sudo -u postgres psql -Atc "SELECT pg_is_in_recovery();"
+
+sudo -u postgres psql -c "
+SELECT
+    status,
+    sender_host,
+    sender_port,
+    slot_name
+FROM pg_stat_wal_receiver;
+"
 
 echo "==> PostgreSQL replica provisioning completed"

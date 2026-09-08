@@ -95,6 +95,17 @@ EOF
 
 systemctl restart postgresql
 
+echo "==> Ensuring physical replication slot for pg-replica exists"
+
+sudo -u postgres psql <<'SQL'
+SELECT pg_create_physical_replication_slot('pg_replica_slot')
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM pg_replication_slots
+    WHERE slot_name = 'pg_replica_slot'
+);
+SQL
+
 echo "==> Verifying PostgreSQL"
 
 sudo -u postgres psql -Atc "SELECT version();"
@@ -103,5 +114,14 @@ sudo -u postgres psql -Atc "SHOW wal_level;"
 sudo -u postgres psql -Atc "SHOW max_wal_senders;"
 sudo -u postgres psql -Atc "SHOW max_replication_slots;"
 sudo -u postgres psql -Atc "SHOW wal_keep_size;"
+
+sudo -u postgres psql -c "
+SELECT
+    slot_name,
+    slot_type,
+    active
+FROM pg_replication_slots
+WHERE slot_name = 'pg_replica_slot';
+"
 
 echo "==> PostgreSQL primary provisioning completed"
