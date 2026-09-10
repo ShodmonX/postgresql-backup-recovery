@@ -64,6 +64,11 @@ Vagrant.configure("2") do |config|
             "BARMAN_STREAMING_PASSWORD" => ENV.fetch("BARMAN_STREAMING_PASSWORD", "")
           }
       end
+
+      if name == "pg-recovery"
+        machine.vm.provision "shell",
+          path: "provision/recovery.sh"
+      end
     end
   end
 end

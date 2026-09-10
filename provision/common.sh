@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-
 set -euo pipefail
 
 echo "==> Running common provisioning on $(hostname)"
 
 export DEBIAN_FRONTEND=noninteractive
 
-# Refresh package metadata only.
-apt-get update -y
+# Refresh package metadata only. Do not perform a full system upgrade.
+apt-get update
 
 # Minimal utilities required by later provisioning and verification.
 apt-get install -y \
@@ -21,21 +20,18 @@ apt-get install -y \
 # Use the same timezone on every node.
 timedatectl set-timezone Asia/Tashkent
 
-# Internal host-only network name resolution.
-HOSTS_BLOCK='
+# Keep internal host mappings idempotent.
+sed -i \
+  '/# BEGIN POSTGRESQL-BACKUP-RECOVERY/,/# END POSTGRESQL-BACKUP-RECOVERY/d' \
+  /etc/hosts
+
+cat >> /etc/hosts <<'EOF'
+
+# BEGIN POSTGRESQL-BACKUP-RECOVERY
 192.168.167.201 pg-primary
 192.168.167.202 pg-replica
 192.168.167.210 barman
 192.168.167.220 pg-recovery
-'
-
-# Keep provisioning idempotent.
-sed -i '/# BEGIN POSTGRESQL-BACKUP-RECOVERY/,/# END POSTGRESQL-BACKUP-RECOVERY/d' /etc/hosts
-
-cat >> /etc/hosts <<EOF
-
-# BEGIN POSTGRESQL-BACKUP-RECOVERY
-${HOSTS_BLOCK}
 # END POSTGRESQL-BACKUP-RECOVERY
 EOF
 
