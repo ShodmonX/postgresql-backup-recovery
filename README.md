@@ -55,9 +55,12 @@ The full end-to-end workflow has been validated on:
 - Barman `3.10.0`
 - VMware host-only network `192.168.167.0/24`
 
-PowerShell workflows are validated end to end.
+The full PowerShell workflow has been validated end to end on Windows.
 
-Equivalent Bash host scripts are included for Linux/macOS, but they have **not yet been validated end to end on a native Linux/macOS host**. WSL is not currently a tested/supported host for this lab.
+The equivalent Bash workflow has also been validated end to end using
+Git Bash on Windows against the same Vagrant/VMware Ubuntu lab.
+
+Native Linux/macOS host execution has not yet been validated.
 
 ## Prerequisites
 
@@ -150,7 +153,9 @@ Run the workflow from the host. Users do not need to SSH into the VMs manually.
 ./tests/smoke-test.sh
 ```
 
-The Bash workflow mirrors the PowerShell workflow but is currently unverified end to end on a native Linux/macOS host.
+The Bash workflow mirrors the PowerShell workflow. It has been validated
+end to end through Git Bash on Windows; native Linux/macOS host validation
+is still pending.
 
 ## Incident scenario
 
