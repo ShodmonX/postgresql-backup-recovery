@@ -4,9 +4,24 @@ set -euo pipefail
 RECOVERY_VM="pg-recovery"
 DB_NAME="recovery_demo"
 
+run_vagrant() {
+  local vm="$1"
+  local command="$2"
+  local output
+
+  if ! output="$(vagrant ssh "${vm}" -c "${command}" -- -T)"; then
+    echo "ERROR: Command failed on VM '${vm}': ${command}" >&2
+    return 1
+  fi
+
+  printf '%s\n' "${output}" | tr -d '\r'
+}
+
+encode_base64() {
+  printf '%s' "$1" | base64 | tr -d '\r\n'
+}
 
 echo "==> Verifying PostgreSQL recovery result"
-
 
 # ------------------------------------------------------------
 # Verify recovery VM is reachable
@@ -15,10 +30,9 @@ echo "==> Verifying PostgreSQL recovery result"
 echo "==> Checking ${RECOVERY_VM}"
 
 if ! vagrant ssh "${RECOVERY_VM}" -c "hostname" -- -T >/dev/null 2>&1; then
-    echo "ERROR: ${RECOVERY_VM} is not reachable through Vagrant"
-    exit 1
+  echo "ERROR: ${RECOVERY_VM} is not reachable through Vagrant."
+  exit 1
 fi
-
 
 # ------------------------------------------------------------
 # Verify PostgreSQL service
@@ -26,20 +40,14 @@ fi
 
 echo "==> Checking PostgreSQL service"
 
-SERVICE_STATE="$(
-    vagrant ssh "${RECOVERY_VM}" -c \
-        "systemctl is-active postgresql" -- -T |
-    tr -d '\r'
-)"
+SERVICE_STATE="$(run_vagrant "${RECOVERY_VM}" "systemctl is-active postgresql")"
 
 if [[ "${SERVICE_STATE}" != "active" ]]; then
-    echo "ERROR: PostgreSQL service is not active"
-    echo "Current state: ${SERVICE_STATE}"
-    exit 1
+  echo "ERROR: PostgreSQL service is not active. Current state: '${SERVICE_STATE}'"
+  exit 1
 fi
 
 echo "==> PostgreSQL service: active"
-
 
 # ------------------------------------------------------------
 # Verify PostgreSQL accepts connections
@@ -47,15 +55,14 @@ echo "==> PostgreSQL service: active"
 
 echo "==> Checking PostgreSQL connectivity"
 
-if ! vagrant ssh "${RECOVERY_VM}" -c \
-    "pg_isready -q" -- -T; then
+PG_READY="$(run_vagrant "${RECOVERY_VM}" "pg_isready -q && echo READY")"
 
-    echo "ERROR: PostgreSQL is not accepting connections"
-    exit 1
+if [[ "${PG_READY}" != "READY" ]]; then
+  echo "ERROR: PostgreSQL is not accepting connections."
+  exit 1
 fi
 
 echo "==> PostgreSQL connectivity: OK"
-
 
 # ------------------------------------------------------------
 # Verify recovery has completed
@@ -64,19 +71,16 @@ echo "==> PostgreSQL connectivity: OK"
 echo "==> Checking recovery state"
 
 RECOVERY_STATE="$(
-    vagrant ssh "${RECOVERY_VM}" -c \
-        "sudo -u postgres psql -Atqc 'SELECT pg_is_in_recovery();'" -- -T |
-    tr -d '\r'
+  run_vagrant "${RECOVERY_VM}" \
+    "sudo -u postgres psql -Atqc 'SELECT pg_is_in_recovery();'"
 )"
 
 if [[ "${RECOVERY_STATE}" != "f" ]]; then
-    echo "ERROR: PostgreSQL is still in recovery mode"
-    echo "pg_is_in_recovery() = ${RECOVERY_STATE}"
-    exit 1
+  echo "ERROR: PostgreSQL is still in recovery mode. pg_is_in_recovery() = '${RECOVERY_STATE}'"
+  exit 1
 fi
 
 echo "==> Recovery state: completed"
-
 
 # ------------------------------------------------------------
 # Verify demo database exists
@@ -84,19 +88,17 @@ echo "==> Recovery state: completed"
 
 echo "==> Checking database ${DB_NAME}"
 
-DATABASE_EXISTS="$(
-    vagrant ssh "${RECOVERY_VM}" -c \
-        "sudo -u postgres psql -Atqc \"SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = '${DB_NAME}');\"" -- -T |
-    tr -d '\r'
+DATABASE_LIST="$(
+  run_vagrant "${RECOVERY_VM}" \
+    "sudo -u postgres psql -Atqc 'SELECT datname FROM pg_database;'"
 )"
 
-if [[ "${DATABASE_EXISTS}" != "t" ]]; then
-    echo "ERROR: Database ${DB_NAME} does not exist"
-    exit 1
+if ! printf '%s\n' "${DATABASE_LIST}" | grep -Fxq "${DB_NAME}"; then
+  echo "ERROR: Database '${DB_NAME}' does not exist on ${RECOVERY_VM}."
+  exit 1
 fi
 
 echo "==> Database ${DB_NAME}: found"
-
 
 # ------------------------------------------------------------
 # Verify expected row count
@@ -105,18 +107,16 @@ echo "==> Database ${DB_NAME}: found"
 echo "==> Checking recovered row count"
 
 ROW_COUNT="$(
-    vagrant ssh "${RECOVERY_VM}" -c \
-        "sudo -u postgres psql ${DB_NAME} -Atqc 'SELECT count(*) FROM customer_orders;'" -- -T |
-    tr -d '\r'
+  run_vagrant "${RECOVERY_VM}" \
+    "sudo -u postgres psql ${DB_NAME} -Atqc 'SELECT count(*) FROM customer_orders;'"
 )"
 
 if [[ "${ROW_COUNT}" != "3" ]]; then
-    echo "ERROR: Expected 3 recovered rows, found '${ROW_COUNT}'"
-    exit 1
+  echo "ERROR: Expected 3 recovered rows, found '${ROW_COUNT}'."
+  exit 1
 fi
 
 echo "==> Recovered rows: ${ROW_COUNT}"
-
 
 # ------------------------------------------------------------
 # Verify exact expected demo data
@@ -124,19 +124,29 @@ echo "==> Recovered rows: ${ROW_COUNT}"
 
 echo "==> Checking expected demo records"
 
+EXPECTED_DATA_SQL="$(cat <<'SQL'
+SELECT count(*)
+FROM customer_orders
+WHERE (customer, amount) IN (
+    ('Alice', 125.50),
+    ('Bob', 890.00),
+    ('Charlie', 42.75)
+);
+SQL
+)"
+
+EXPECTED_DATA_BASE64="$(encode_base64 "${EXPECTED_DATA_SQL}")"
 EXPECTED_ROW_COUNT="$(
-    vagrant ssh "${RECOVERY_VM}" -c \
-        "sudo -u postgres psql ${DB_NAME} -Atqc \"SELECT count(*) FROM customer_orders WHERE (customer, amount) IN (('Alice',125.50),('Bob',890.00),('Charlie',42.75));\"" -- -T |
-    tr -d '\r'
+  run_vagrant "${RECOVERY_VM}" \
+    "echo ${EXPECTED_DATA_BASE64} | base64 -d | sudo -u postgres psql ${DB_NAME} -Atq"
 )"
 
 if [[ "${EXPECTED_ROW_COUNT}" != "3" ]]; then
-    echo "ERROR: Recovered data does not match expected demo records"
-    exit 1
+  echo "ERROR: Recovered data does not match the expected demo records."
+  exit 1
 fi
 
 echo "==> Expected demo records: OK"
-
 
 # ------------------------------------------------------------
 # Verify instance is writable
@@ -144,31 +154,34 @@ echo "==> Expected demo records: OK"
 
 echo "==> Checking write capability"
 
-if ! vagrant ssh "${RECOVERY_VM}" -c \
-    "sudo -u postgres psql -v ON_ERROR_STOP=1 ${DB_NAME} -c '
-        BEGIN;
-        CREATE TABLE __recovery_write_probe (
-            id integer
-        );
-        ROLLBACK;
-    '" -- -T; then
+WRITE_TEST_COMMAND="$(cat <<EOF2
+sudo -u postgres psql -v ON_ERROR_STOP=1 ${DB_NAME} -c '
+BEGIN;
+CREATE TABLE __recovery_write_probe (
+    id integer
+);
+ROLLBACK;
+'
+EOF2
+)"
 
-    echo "ERROR: Recovery instance is not writable"
-    exit 1
+WRITE_TEST_BASE64="$(encode_base64 "${WRITE_TEST_COMMAND}")"
+
+if ! vagrant ssh "${RECOVERY_VM}" -c \
+  "echo ${WRITE_TEST_BASE64} | base64 -d | bash" -- -T; then
+  echo "ERROR: Recovery instance is not writable."
+  exit 1
 fi
 
 echo "==> Write capability: OK"
-
 
 # ------------------------------------------------------------
 # Display recovered data
 # ------------------------------------------------------------
 
 echo "==> Recovered data"
-
-vagrant ssh "${RECOVERY_VM}" -c \
-    "sudo -u postgres psql ${DB_NAME} -c 'SELECT id, customer, amount, created_at FROM customer_orders ORDER BY id;'" -- -T
-
+run_vagrant "${RECOVERY_VM}" \
+  "sudo -u postgres psql ${DB_NAME} -c 'SELECT id, customer, amount, created_at FROM customer_orders ORDER BY id;'"
 
 # ------------------------------------------------------------
 # Final result

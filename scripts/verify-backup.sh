@@ -4,24 +4,36 @@ set -euo pipefail
 BARMAN_VM="barman"
 SERVER_NAME="pg-primary"
 
+run_vagrant() {
+  local vm="$1"
+  local command="$2"
+  local output
+
+  if ! output="$(vagrant ssh "${vm}" -c "${command}" -- -T)"; then
+    echo "ERROR: Command failed on VM '${vm}': ${command}" >&2
+    return 1
+  fi
+
+  printf '%s\n' "${output}" | tr -d '\r'
+}
+
 echo "==> Verifying latest Barman backup"
+echo "==> Checking ${BARMAN_VM}"
 
 if ! vagrant ssh "${BARMAN_VM}" -c "hostname" -- -T >/dev/null 2>&1; then
-  echo "ERROR: ${BARMAN_VM} is not reachable through Vagrant"
+  echo "ERROR: ${BARMAN_VM} is not reachable through Vagrant."
   exit 1
 fi
 
 echo "==> Running Barman health check"
-
-vagrant ssh "${BARMAN_VM}" -c \
-  "sudo -u barman barman check ${SERVER_NAME}" -- -T
+run_vagrant "${BARMAN_VM}" \
+  "sudo -u barman barman check ${SERVER_NAME}"
 
 echo "==> Finding latest backup"
 
 BACKUP_LIST="$(
-  vagrant ssh "${BARMAN_VM}" -c \
-    "sudo -u barman barman list-backups ${SERVER_NAME} --minimal" -- -T \
-    | tr -d '\r'
+  run_vagrant "${BARMAN_VM}" \
+    "sudo -u barman barman list-backups ${SERVER_NAME} --minimal"
 )"
 
 BACKUP_ID="$(printf '%s\n' "${BACKUP_LIST}" | sed -n '1p')"
@@ -32,7 +44,6 @@ if [[ -z "${BACKUP_ID}" ]]; then
 fi
 
 echo "==> Latest backup: ${BACKUP_ID}"
-
 echo "==> Checking backup status"
 
 if ! vagrant ssh "${BARMAN_VM}" -c \
@@ -40,20 +51,17 @@ if ! vagrant ssh "${BARMAN_VM}" -c \
 
   vagrant ssh "${BARMAN_VM}" -c \
     "sudo -u barman barman show-backup ${SERVER_NAME} ${BACKUP_ID}" -- -T
-
   echo "ERROR: Backup ${BACKUP_ID} is not in DONE state"
   exit 1
 fi
 
 echo "==> Checking backup with barman verify-backup"
-
-vagrant ssh "${BARMAN_VM}" -c \
-  "sudo -u barman barman verify-backup ${SERVER_NAME} ${BACKUP_ID}" -- -T
+run_vagrant "${BARMAN_VM}" \
+  "sudo -u barman barman verify-backup ${SERVER_NAME} ${BACKUP_ID}"
 
 echo "==> Backup details"
-
-vagrant ssh "${BARMAN_VM}" -c \
-  "sudo -u barman barman show-backup ${SERVER_NAME} ${BACKUP_ID}" -- -T
+run_vagrant "${BARMAN_VM}" \
+  "sudo -u barman barman show-backup ${SERVER_NAME} ${BACKUP_ID}"
 
 echo
 echo "========================================="
